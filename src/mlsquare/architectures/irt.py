@@ -84,13 +84,27 @@ class GeneralisedIrtModel(BaseModel):
 
         discrimination_param = Dense(model_params['disc_params']['units'], use_bias=model_params['disc_params']['use_bias'],
                                      kernel_initializer=model_params['disc_params']['kernel'],
-                                     bias_initializer=model_params['disc_params']['bias'],
+                                     #bias_initializer=model_params['disc_params']['bias'],
                                      kernel_regularizer=l1_l2(
                                         l1=model_params['disc_params']['regularizers']['l1'],
                                         l2=model_params['disc_params']['regularizers']['l2']),
                                      trainable=model_params['disc_params']['train'],
-                                     activation=model_params['disc_params']['act'],
+                                     #activation=model_params['disc_params']['act'],
                                      name='disc_param')(quest_input_layer)
+        
+        #constant= Input(tensor=K.constant(np.array([1]).reshape(1,1)), shape=(1,))
+        #pdb.set_trace()
+        discrimination_bias_intercept = Dense(model_params['disc_params']['units'], use_bias=False,
+                                     kernel_initializer=model_params['disc_params']['bias'],
+                                     #kernel_regularizer=l1_l2(
+                                     #   l1=model_params['disc_params']['regularizers']['l1'],
+                                     #   l2=model_params['disc_params']['regularizers']['l2']),
+                                     trainable=False,#model_params['disc_params']['train'],
+                                     name= "disc_bias_intercept")(quest_input_layer)#(constant)
+        #pdb.set_trace()
+        disc_param_intercept_interact = keras.layers.Add(name= "disc_bias_intercept_add",)([discrimination_param, discrimination_bias_intercept])
+
+        discrimination_param = Activation(model_params['disc_params']['act'], name= 'disc_activation')(disc_param_intercept_interact)
 
         disc_latent_interaction = keras.layers.Multiply(
             name='lambda_latent_inter.')([discrimination_param, latent_trait])
@@ -104,23 +118,43 @@ class GeneralisedIrtModel(BaseModel):
         sigmoid_layer = Activation(
             'sigmoid', name='Sigmoid_func')(alpha_lambda_add)
 
-        guess_param = Dense(model_params['guess_params']['units'], use_bias=model_params['guess_params']['use_bias'],
+        guess_param = Dense(model_params['guess_params']['units'], use_bias=False,#model_params['guess_params']['use_bias'],
                             kernel_initializer=model_params['guess_params']['kernel'],
-                            bias_initializer=model_params['guess_params']['bias'],
+                            #bias_initializer=model_params['guess_params']['bias'],
                             kernel_regularizer=l1_l2(
                                 l1=model_params['guess_params']['regularizers']['l1'],
                                 l2=model_params['guess_params']['regularizers']['l2']),
                             trainable=model_params['guess_params']['train'],
-                            activation=model_params['guess_params']['act'], name='guessing_param')(quest_input_layer)
+                            #activation=model_params['guess_params']['act'],
+                            name='guessing_param')(quest_input_layer)
 
-        slip_param= Dense(model_params['slip_params']['units'], use_bias=model_params['slip_params']['use_bias'],
+        guess_bias_intercept = Dense(model_params['guess_params']['units'], use_bias=False,
+                                     kernel_initializer=model_params['guess_params']['bias'],                                     
+                                     trainable=False,
+                                     name= "guess_bias_intercept")(quest_input_layer)
+        guess_param_intercept_interact = keras.layers.Add(name= "guess_bias_intercept_add",)([guess_param, guess_bias_intercept])
+
+        guess_param = Activation(model_params['guess_params']['act'], name= 'guess_activation')(guess_param_intercept_interact)
+
+        slip_param= Dense(model_params['slip_params']['units'], use_bias=False,#model_params['slip_params']['use_bias'],
                             kernel_initializer=model_params['slip_params']['kernel'],
-                            bias_initializer=model_params['slip_params']['bias'],
+                            #bias_initializer=model_params['slip_params']['bias'],
                             kernel_regularizer=l1_l2(
                                 l1=model_params['slip_params']['regularizers']['l1'],
                                 l2=model_params['slip_params']['regularizers']['l2']),
                             trainable=model_params['slip_params']['train'],
-                            activation=model_params['slip_params']['act'], name='slip_param')(quest_input_layer)
+                            #activation=model_params['slip_params']['act'],
+                            name='slip_param')(quest_input_layer)
+
+        slip_bias_intercept = Dense(model_params['slip_params']['units'], use_bias=False,
+                                     kernel_initializer=model_params['slip_params']['bias'],
+                                     trainable=False,
+                                     name= "slip_bias_intercept")(quest_input_layer)
+        
+        slip_param_intercept_interact = keras.layers.Add(name= "slip_bias_intercept_add",)([slip_param, slip_bias_intercept])
+
+        slip_param = Activation(model_params['slip_params']['act'], name= 'slip_activation')(slip_param_intercept_interact)
+
 
         guess_param_interaction = Lambda(lambda x: 1 - x, name='slip_param_inter.')(slip_param)
         guess_param_interaction = keras.layers.Subtract(name= 'slip/guess_interaction')([guess_param_interaction, guess_param])#2
@@ -321,6 +355,9 @@ class KerasIrt1PLModel(GeneralisedIrtModel):
                         'slip_params':{'units': 1, 'kernel_params': {'distrib': 'uniform'}, 'bias_param':-3.5, 'train': False, 'act': 'sigmoid', 'use_bias':True},
                         #'regularizers': {'l1': 0, 'l2': 0},
                         'hyper_params': {'units': 1, 'optimizer': 'sgd', 'loss': 'binary_crossentropy'}}
+        default_nas_config = {"guess_params.bias_param": hp.uniform("guess_params.bias_param", -5, -2),
+                            "slip_params.bias_param": hp.uniform("slip_params.bias_param", -5,-2)}#--if nas params should have separate set & get methods?
+        model_params.update({'model_nas_params':{'search_algo_name':'hyperOpt', 'search_space':default_nas_config}})
         self.set_params(params=model_params, set_by='model_init')
 
 
@@ -340,6 +377,9 @@ class KerasIrt2PLModel(GeneralisedIrtModel):
                         'slip_params':{'units': 1, 'kernel_params': {'distrib': 'uniform'}, 'bias_param':-3.5, 'train': False, 'act': 'sigmoid', 'use_bias':True},
                         #'regularizers': {'l1': 0, 'l2': 0},
                         'hyper_params': {'units': 1, 'optimizer': 'sgd', 'loss': 'binary_crossentropy'}}
+        default_nas_config = {"guess_params.bias_param": hp.uniform("guess_params.bias_param", -5, -2),
+                            "slip_params.bias_param": hp.uniform("slip_params.bias_param", -5,-2)}#--if nas params should have separate set & get methods?
+        model_params.update({'model_nas_params':{'search_algo_name':'hyperOpt', 'search_space':default_nas_config}})
 
         self.set_params(params=model_params, set_by='model_init')
 
