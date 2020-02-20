@@ -129,7 +129,7 @@ class GeneralisedIrtModel(BaseModel):
                             name='guessing_param')(quest_input_layer)
 
         guess_bias_intercept = Dense(model_params['guess_params']['units'], use_bias=False,
-                                     kernel_initializer=model_params['guess_params']['bias'],                                     
+                                     kernel_initializer=model_params['guess_params']['bias'],
                                      trainable=False,
                                      name= "guess_bias_intercept")(quest_input_layer)
         guess_param_intercept_interact = keras.layers.Add(name= "guess_bias_intercept_add",)([guess_param, guess_bias_intercept])

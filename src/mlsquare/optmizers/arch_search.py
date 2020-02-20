@@ -14,6 +14,7 @@ from collections import defaultdict
 
 warnings.filterwarnings("ignore")
 import time
+from keras import backend as K
 
 def get_opt_model(x_user, x_questions, y_vals, proxy_model, **kwargs):
         kwargs.setdefault('nas_params', None)
@@ -81,36 +82,54 @@ def get_opt_model(x_user, x_questions, y_vals, proxy_model, **kwargs):
             model = proxy_model.create_model()
             history = model.fit(x=[x_user, x_questions], y=y_vals, batch_size=dict_['batch_size'],
                                      epochs=dict_['epochs'], verbose=0, validation_split=dict_['validation_split'])
-            _, mae, accuracy = model.evaluate(x=[x_user, x_questions], y=y_vals)
+            loss, mae, accuracy = model.evaluate(x=[x_user, x_questions], y=y_vals)
+            los_li = []
+            for l in model.losses:
+                print(l)
+                if l!=0:
+                    los_li.append(K.eval(l))
+            los_li= sum(los_li)
+            print('\nReported total loss: {} and cumulative regualrizer+ network loss:{}'.format(loss,los_li))
+
             last_checkpoint="weights_tune_{}.h5".format(list(zip(np.random.choice(10, len(config), replace=False), config)))
             model.save_weights(last_checkpoint)
-            reporter(mean_error=mae, mean_accuracy=accuracy,
+            reporter(mean_error=loss, mean_accuracy=accuracy,
                      checkpoint=last_checkpoint)
 
         t1 = time.time()
         trials= tune.run(train_model, name= "{}_optimization".format(dict_['search_algo_name']),
                                         resources_per_trial={"cpu": 4},
-                                        stop={"mean_error": 0.15,
-                                              "mean_accuracy": 95},
+                                        stop={"mean_error": 0
+                                              },
                                         num_samples=dict_['num_samples'],
                                         scheduler=dict_['sch'], search_alg= dict_['algo'], config= dict_['cfg'])
 
         def get_sorted_trials(trial_list, metric):
-            return sorted(trial_list, key=lambda trial: trial.last_result.get(metric, 0), reverse=True)
+            return sorted(trial_list, key=lambda trial: trial.last_result.get(metric, 0))
 
         metric = "mean_error"
         sorted_trials = get_sorted_trials(trials, metric)
-
+        print('\n##model Trials: ', sorted_trials)
         for best_trial in sorted_trials:
             try:
                 print("Creating model...")
                 best_params= process_config(best_trial.config)
                 proxy_model.set_params(params=best_params, set_by='optimizer')
                 best_model = proxy_model.create_model()
+                print('\n##best_model checkpoint: ', best_trial.last_result["checkpoint"])
                 weights = os.path.join(
                     best_trial.logdir, best_trial.last_result["checkpoint"])
                 print("Loading from", weights)
                 best_model.load_weights(weights)
+
+                loss, mae, accuracy = best_model.evaluate(x=[x_user, x_questions], y=y_vals)
+                los_li = []
+                for l in best_model.losses:
+                    #print(l)
+                    if l!=0:
+                        los_li.append(K.eval(l))
+                los_li= sum(los_li)
+                print('\nFinal Reported total loss: {} and cumulative regualrizer+ network loss:{}'.format(loss,los_li))
                 break
             except Exception as e:
                 print(e)
