@@ -14,6 +14,81 @@ from collections import defaultdict
 
 warnings.filterwarnings("ignore")
 import time
+from torch.autograd import Variable
+import torch
+import os
+
+def get_pytorch_model(X, y, proxy_model, **kwargs):
+        kwargs.setdefault('epochs', 64)
+        train_x= Variable(torch.Tensor(X).float()) #df.iloc[:, :-1].values).float()
+        train_y = Variable((torch.Tensor(y).float())) #df.iloc[:, -1].values).long()
+
+        ray_verbose = False
+        _ray_log_level = logging.INFO if ray_verbose else logging.ERROR
+        ray.init(log_to_driver=False, logging_level=_ray_log_level, ignore_reinit_error=True, redis_max_memory=20*1000*1000*1000, object_store_memory=1000000000,
+                 num_cpus=4)
+
+        def train_model(config, reporter):
+            proxy_model.set_params(params=config, set_by='optimizer')
+            proxy_obj= proxy_model.create_model()
+            model = proxy_obj.model
+            optimizer= proxy_obj.optimizer
+            criterion= proxy_obj.criterion
+            for epoch in range(kwargs['epochs']):
+                optimizer.zero_grad()
+                y_pred = model(train_x)
+                loss = criterion(y_pred, train_y)
+                if epoch%50==0:
+                    print('epoch: ', epoch, ' loss: ', loss.item())
+                loss.backward()
+                optimizer.step()
+            y_pred= model(train_x)
+            loss= criterion(y_pred, train_y).cpu().detach().numpy()
+            last_checkpoint_path = "pytorch_model_tune_{}.pt".format(config)
+            torch.save({
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': loss,
+            }, last_checkpoint_path)
+            reporter(total_loss=loss, checkpoint=last_checkpoint_path)
+
+        t1 = time.time()
+        trials= tune.run(train_model, name= "{}_optimization".format('grid_search'),
+                                        resources_per_trial={"cpu": 4},
+                                        stop={"total_loss": 0},
+                                        config=proxy_model.get_params(), reuse_actors=True)
+
+        def get_sorted_trials(trial_list, metric):
+            return sorted(trial_list, key=lambda trial: trial.last_result.get(metric, 0))
+
+        metric = "total_loss"
+        sorted_trials = get_sorted_trials(trials, metric)
+
+        for best_trial in sorted_trials:
+            try:
+                print("Creating model...")
+                proxy_model.set_params(params=best_trial.config, set_by='optimizer')
+                proxy_obj= proxy_model.create_model()
+                model_path= os.path.join(
+                    best_trial.logdir, best_trial.last_result["checkpoint"])
+                print("Loading model from: ", model_path)
+                best_model= proxy_obj.model
+                best_optimizer = proxy_obj.optimizer
+
+                model_checkpoint = torch.load(model_path)
+                best_model.load_state_dict(model_checkpoint['model_state_dict'])
+                best_optimizer.load_state_dict(model_checkpoint['optimizer_state_dict'])
+                loss = model_checkpoint['loss']
+                print('best model reported loss:', loss)
+                best_model.eval()
+                break
+            except Exception as e:
+                print(e)
+                print("Loading failed. Trying next model")
+        exe_time = time.time()-t1
+        print('exe time: ', exe_time)
+        ray.shutdown()
+        return best_model, best_optimizer, trials     
 
 def get_opt_model(x_user, x_questions, y_vals, proxy_model, **kwargs):
         kwargs.setdefault('nas_params', None)

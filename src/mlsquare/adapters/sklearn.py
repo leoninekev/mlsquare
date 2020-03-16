@@ -4,7 +4,7 @@ import logging
 import os
 import ray
 from ray import tune
-from ..optmizers import get_best_model, get_opt_model
+from ..optmizers import get_best_model, get_opt_model, get_pytorch_model
 from ..utils.functions import _parse_params
 import pickle
 import onnxmltools
@@ -625,69 +625,47 @@ class SklearnPytorchClassifier():
         self.primal_model = primal_model
         self.params = None  # Temporary!
         self.proxy_model = proxy_model
+        self.params=None
 
     def fit(self, X, y, **kwargs):
         self.proxy_model.X = X
         self.proxy_model.y = y
         self.proxy_model.primal = self.primal_model
-        kwargs.setdefault('epochs',10)
+        kwargs.setdefault('epochs', 10)
+        kwargs.setdefault('params', self.params)
+        self.params = kwargs['params']
         self.epochs= kwargs['epochs']
-        train_x= Variable(torch.Tensor(X).float()) #df.iloc[:, :-1].values).float()
-        train_y = Variable((torch.Tensor(y).long())) #df.iloc[:, -1].values).long()
+        print('####\nParams Before:', self.params)
+        print('####\nProxy_model get_params before:', self.proxy_model.get_params())
+        if self.params != None:  # Validate implementation with different types of tune input
+            if not isinstance(self.params, dict):
+                raise TypeError("Params should be of type 'dict'")
+            self.params = _parse_params(self.params, return_as='flat')
+            self.proxy_model.update_params(self.params)
 
-        model, optimizer, criterion = self.proxy_model.create_model()
-        for epoch in range(self.epochs):
-            # Forward Propagation
-            # Access model, criterion and optimizer from proxy_model
-            # Alter how tune computes `fit`. Override keras_model.fit option
-            #running_loss = 0.0
-            optimizer.zero_grad()
-            y_pred = model(train_x)#X)# Compute and print loss
-            loss = criterion(y_pred, train_y)#y)
-            # Zero the gradients
-            print('epoch: ', epoch, ' loss: ', loss.item())
+        print('####\nProxy_model get_params After:', self.proxy_model.get_params())
+        self.proxy_model.model, self.proxy_model.optimizer, self.trials = get_pytorch_model(X, y, proxy_model=self.proxy_model, **kwargs)
+        
+        #train_x= Variable(torch.Tensor(X).float()) #df.iloc[:, :-1].values).float()
+        #train_y = Variable((torch.Tensor(y).float())) #df.iloc[:, -1].values).long()
 
-            # perform a backward pass (backpropagation)
-            loss.backward()
-
-            # Update the parameters
-            optimizer.step()
-            #running_loss += loss.item()
-            #if i % 20 == 1999:    # print every 2000 mini-batches
-            #print('[%d, %5d] loss: %.3f' %
-            #      (epoch + 1, i + 1, running_loss / 2000))
-            #print
-            #running_loss = 0.0
-        return model
-
-#`class SklearnPytorchClassifier():
-#    def __init__(self, proxy_model, primal_model, **kwargs):
-#        self.primal_model = primal_model
-#        self.params = None  # Temporary!
-#        self.proxy_model = proxy_model
-#
-#    def fit(self, X, y, **kwargs):
-#        self.proxy_model.X = X
-#        self.proxy_model.y = y
-#        self.proxy_model.primal = self.primal_model
-#
-#        for epoch in range(50):
-#            # Forward Propagation
-#            # Access model, criterion and optimizer from proxy_model
-#            # Alter how tune computes `fit`. Override keras_model.fit option
-#            y_pred = model(x)    # Compute and print loss
-#            loss = criterion(y_pred, y)
-#            # Zero the gradients
-#            print('epoch: ', epoch, ' loss: ', loss.item())
-#            optimizer.zero_grad()
-#
-#            # perform a backward pass (backpropagation)
-#            loss.backward()
-#
-#            # Update the parameters
-#            optimizer.step()
-#
-
+        #self.proxy_model.create_model()
+        ##model, optimizer, criterion = self.proxy_model.create_model()
+        #for epoch in range(self.epochs):
+        #    # Forward Propagation
+        #    # Access model, criterion and optimizer from proxy_model
+        #    # Alter how tune computes `fit`. Override keras_model.fit option
+        #    self.proxy_model.optimizer.zero_grad()
+        #    y_pred = self.proxy_model.model(train_x)#X)# Compute and print loss
+        #    loss = self.proxy_model.criterion(y_pred, train_y)#y)
+        #    # Zero the gradients
+        #    if epoch%50==0:
+        #        print('epoch: ', epoch, ' loss: ', loss.item())
+        #    # perform a backward pass (backpropagation)
+        #    loss.backward()
+        #    # Update the parameters
+        #    self.proxy_model.optimizer.step()
+        return self#model
 # TODO
 # predict_proba implementation
 # filter_sklearn_params method
